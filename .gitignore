@@ -10,6 +10,7 @@ logs/
 
 # Output files
 *.ics
+*.pkl
 
 # Github.com gitignore/Python.gitignore
 # Byte-compiled / optimized / DLL files

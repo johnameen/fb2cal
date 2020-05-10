@@ -25,6 +25,7 @@ import re
 import mechanicalsoup
 import requests
 import urllib.parse
+import pickle
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
@@ -62,6 +63,25 @@ class Birthday:
     
     def __unicode__(self):
         return u'{self.name} ({self.day}/{self.month})'
+
+    def __gt__(self, other):
+        if self.month > other.month:
+            return True
+        elif self.month < other.month:
+            return False
+        else:
+            return self.day > other.day
+    
+    def __lt__(self, other):
+        if self.month < other.month:
+            return True
+        elif self.month > other.month:
+            return False
+        else:
+            return self.day < other.day
+
+    def __eq__(self, other):
+        return (self.month == other.month and self.day == other.day)
 
 # Entry point
 def main():
@@ -112,9 +132,22 @@ def main():
     facebook_authenticate(browser, config['AUTH']['FB_EMAIL'], config['AUTH']['FB_PASS'])
     logger.info('Successfully authenticated with Facebook.')
 
+    # Use old birthday values saved in pickle
+    use_cache = False
+    birthdays = []
+    if util.strtobool(config['FILESYSTEM']['USE_CACHED_BIRTHDAYS']):
+        if os.path.exists('birthdays.pkl'):
+            logger.info("Using cache for birthdays.")
+            use_cache = True
+            with open('birthdays.pkl', 'rb') as pkl_file:
+                birthdays = pickle.load(pkl_file)
+        else:
+            logger.info('Cache file not found. Going long route.')
+
     # Get birthday objects for all friends via async endpoint
-    logger.info('Fetching all Birthdays via async endpoint...')
-    birthdays = get_async_birthdays(browser)
+    if not use_cache:
+        logger.info('Fetching all Birthdays via async endpoint...')
+        birthdays = get_async_birthdays(browser, birthdays)
 
     if len(birthdays) == 0:
         logger.warning(f'Birthday list is empty. Failed to fetch any birthdays.')
@@ -374,7 +407,7 @@ def get_facebook_locale(browser):
     return __locale
 
 
-def get_async_birthdays(browser):
+def get_async_birthdays(browser, birthday_cache):
     """ Returns list of birthday objects by querying the Facebook birthday async page """
     
     FACEBOOK_BIRTHDAY_ASYNC_ENDPOINT = 'https://www.facebook.com/async/birthdays/?'
@@ -459,6 +492,8 @@ def parse_birthday_async_output(browser, text):
         else:
             uid = get_entity_id_from_vanity_name(browser, vanity_name)
         
+        # Add UID cache check if you want.
+
         # Parse tooltip content into day/month
         day, month = parse_birthday_day_month(tooltip_content, name, user_locale)
 
@@ -786,8 +821,31 @@ def populate_birthdays_calendar(birthdays):
     c.extra.append(ContentLine(name='X-ORIGINAL-URL', value='/events/birthdays/'))
 
     cur_date = datetime.now()
+    backburner = []
+    rearrange = False
 
-    for birthday in birthdays:
+    logger.info("Saving birthdays to local cache...")
+    with open('birthdays.pkl', 'wb') as pkl_file:
+        pickle.dump(birthdays, pkl_file)
+        logger.info("Saved to cache (src/birthdays.pkl)")
+
+    for birthday_i in range(0, len(birthdays)):
+
+        birthday = birthdays[birthday_i]
+        
+        if (birthday.month == 2 and birthday.day == 29):
+            rearrange = True
+            backburner.append(birthday)
+            del birthdays[birthday_i]
+            birthday_i -= 1
+            continue
+        if rearrange:
+            if not (birthday.month == 2 and birthday.day == 28):
+                birthdays.insert(birthday_i, backburner)
+                rearrange = False
+                birthday_i -= 1
+                continue
+
         e = Event()
         e.uid = birthday.uid
         e.name = f"{birthday.name}'s Birthday"
